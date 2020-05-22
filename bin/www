@@ -1,0 +1,113 @@
+#!/usr/bin/env node
+
+const app = require('../app');
+const port = normalizePort(process.env.PORT || '8080');
+const debug = require('debug')('website:server');
+const http = require('http');
+const oracledb = require("oracledb");
+const dbConfig = require("../db/dbconfig");
+app.set('port', port);
+oracledb.autoCommit = true;
+// Main entry point.  Creates a connection pool and an HTTP server
+// that executes a query based on the URL parameter given. 
+// The pool values shown are the default values.
+function init() {
+  try {
+    oracledb.createPool({
+      user: dbConfig.user,
+      password: dbConfig.password,
+      connectString: dbConfig.connectString,
+      // edition: 'ORA$BASE', // used for Edition Based Redefintion
+      events: false, // whether to handle Oracle Database FAN and RLB events or support CQN
+      // externalAuth: false, // whether connections should be established using External Authentication
+      // homogeneous: true, // all connections in the pool have the same credentials
+      // poolAlias: 'default', // set an alias to allow access to the pool via a name.
+      // poolIncrement: 1, // only grow the pool by one connection at a time
+      poolMax: 2, // maximum size of the pool. Increase UV_THREADPOOL_SIZE if you increase poolMax
+      poolMin: 2, // start with no connections; let the pool shrink completely
+      poolPingInterval: 60, // check aliveness of connection if idle in the pool for 60 seconds
+      poolTimeout: 60, // terminate connections that are idle in the pool for 60 seconds
+      queueTimeout: 60000, // terminate getConnection() calls in the queue longer than 60000 milliseconds
+      // sessionCallback: myFunction, // function invoked for brand new connections or by a connection tag mismatch
+      // stmtCacheSize: 30 // number of statements that are cached in the statement cache of each connection
+    }, (error, pool) => {
+      if (error) {
+        console.log(`error in pool creation ${error}`);
+        throw error;
+      }
+      // Create HTTP server and listen on port httpPort
+      const server = http.createServer(app);
+      // Listen on provided port, on all network interfaces.
+      server.listen(port);
+      server.on('error', (error) => {
+        if (error.syscall !== 'listen') {
+          throw error;
+        }
+
+        let bind = typeof port === 'string' ?
+          'Pipe ' + port :
+          'Port ' + port;
+
+        // handle specific listen errors with friendly messages
+        switch (error.code) {
+          case 'EACCES':
+            console.error(bind + ' requires elevated privileges');
+            process.exit(1);
+          case 'EADDRINUSE':
+            console.error(bind + ' is already in use');
+            process.exit(1);
+          default:
+            throw error;
+        }
+      });
+      server.on('listening', () => {
+        let addr = server.address();
+        let bind = typeof addr === 'string' ?
+          'pipe ' + addr :
+          'port ' + addr.port;
+        debug('Listening on ' + bind);
+
+      });
+      console.log("Server is running at " + port);
+    });
+  } catch (err) {
+    console.error("init() error: " + err.message);
+    closePoolAndExit();
+  }
+}
+
+// Normalize a port into a number, string, or false.
+function normalizePort(val) {
+  let port = parseInt(val, 10);
+  if (isNaN(port)) {
+    // named pipe
+    return val;
+  }
+  if (port >= 0) {
+    // port number
+    return port;
+  }
+  return false;
+}
+
+async function closePoolAndExit() {
+  console.log("\nTerminating");
+  try {
+    // Get the pool from the pool cache and close it when no
+    // connections are in use, or force it closed after 10 seconds
+    // If this hangs, you may need DISABLE_OOB=ON in a sqlnet.ora file
+    await oracledb.getPool().close(10);
+    console.log("Pool closed");
+    process.exit(0);
+  } catch (err) {
+    console.error(err.message);
+    process.exit(1);
+  }
+}
+
+
+process
+  .once('SIGTERM', closePoolAndExit)
+  .once('SIGINT', closePoolAndExit);
+
+init() //start the program
